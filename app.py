@@ -13,7 +13,7 @@ def home():
 
 
 # @app.route("/health")
-        @app.rou
+@app.route("/health")
 def health():
     return {
         "status": "healthy"
