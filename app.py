@@ -12,7 +12,8 @@ def home():
     }
 
 
-@app.route("/health")
+# @app.route("/health")
+        @app.rou
 def health():
     return {
         "status": "healthy"
