@@ -1,4 +1,4 @@
- from flask import Flask
+from flask import Flask
 
 app = Flask(__name__)
 
@@ -6,8 +6,16 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return {
-        "message": "Hello from Jenkins CI!",
+        "message": "Hello! Jenkins webhook test updated!",
+        "version": "v2",
         "status": "running"
+    }
+
+
+@app.route("/health")
+def health():
+    return {
+        "status": "healthy"
     }
 
 
