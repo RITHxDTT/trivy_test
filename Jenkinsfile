@@ -36,7 +36,7 @@ pipeline {
         }
 
         failure {
-            echo '❌ Jenkins build FAILED!'
+            echo ' Jenkins build FAILED!'
         }
     }
 }
