@@ -1,0 +1,36 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking source code...'
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo 'Building application...'
+                sh 'python3 --version'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo 'Running test...'
+                sh 'python3 -m py_compile app.py'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Jenkins pipeline completed successfully!'
+        }
+
+        failure {
+            echo '❌ Jenkins pipeline failed!'
+        }
+    }
+}
