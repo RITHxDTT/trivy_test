@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         IMAGE_NAME = "trivy-test"
+        TRIVY = "/usr/local/bin/trivy"
     }
 
     stages {
@@ -12,7 +13,7 @@ pipeline {
                 echo '🔍 Checking dependencies for vulnerabilities...'
 
                 sh '''
-                    trivy fs \
+                    ${TRIVY} fs \
                       --scanners vuln \
                       --severity HIGH,CRITICAL \
                       --exit-code 1 \
@@ -24,10 +25,13 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                echo '🐳 Dependencies are safe. Building Docker image...'
+                echo '🐳 Dependencies passed security scan.'
+                echo '🐳 Building Docker image...'
 
                 sh '''
-                    docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} .
+                    docker build \
+                      -t ${IMAGE_NAME}:${BUILD_NUMBER} \
+                      .
                 '''
             }
         }
@@ -37,7 +41,7 @@ pipeline {
                 echo '🔍 Scanning final Docker image...'
 
                 sh '''
-                    trivy image \
+                    ${TRIVY} image \
                       --severity HIGH,CRITICAL \
                       --exit-code 1 \
                       --no-progress \
@@ -48,18 +52,32 @@ pipeline {
 
         stage('Security Passed') {
             steps {
-                echo '✅ Security checks passed!'
+                echo '✅ No blocking HIGH/CRITICAL vulnerabilities found!'
+                echo '🚀 Application is ready for the next deployment stage.'
             }
         }
     }
 
     post {
+
         success {
-            echo '✅ Pipeline SUCCESS - dependencies and image are safe.'
+            echo '========================================'
+            echo '✅ PIPELINE SUCCESS'
+            echo '✅ Dependency scan passed'
+            echo '✅ Docker image scan passed'
+            echo '========================================'
         }
 
         failure {
-            echo '🚨 Pipeline FAILED - HIGH/CRITICAL vulnerability detected!'
+            echo '========================================'
+            echo '❌ PIPELINE FAILED'
+            echo '⚠️ Check the failed stage and Trivy output above.'
+            echo '========================================'
+        }
+
+        always {
+            echo "Build Number: ${BUILD_NUMBER}"
+            echo "Docker Image: ${IMAGE_NAME}:${BUILD_NUMBER}"
         }
     }
 }
