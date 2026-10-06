@@ -9,9 +9,9 @@ pipeline {
 
     stages {
 
-        // ============================================
-        // 1. DEPENDENCY SECURITY SCAN
-        // ============================================
+        // ==========================================
+        // 1. TRIVY DEPENDENCY SCAN
+        // ==========================================
         stage('Trivy Dependency Scan') {
             steps {
                 echo '🔍 Scanning project dependencies...'
@@ -45,13 +45,13 @@ pipeline {
         }
 
 
-        // ============================================
+        // ==========================================
         // 2. BUILD DOCKER IMAGE
-        // Only runs if Trivy passed
-        // ============================================
+        // Only runs if Trivy passes
+        // ==========================================
         stage('Build Docker Image') {
             steps {
-                echo '🐳 Security scan passed.'
+                echo '🐳 Dependency security scan passed.'
                 echo '🐳 Building Docker image...'
 
                 sh '''
@@ -65,9 +65,9 @@ pipeline {
         }
 
 
-        // ============================================
+        // ==========================================
         // 3. BUILD COMPLETE
-        // ============================================
+        // ==========================================
         stage('Build Complete') {
             steps {
                 echo '========================================'
@@ -82,13 +82,18 @@ pipeline {
 
     post {
 
-        // ============================================
-        // SUCCESS TELEGRAM MESSAGE
-        // ============================================
+        // ==========================================
+        // SUCCESS
+        // ==========================================
         success {
+
+            echo '========================================'
+            echo '✅ PIPELINE SUCCESS'
+            echo '========================================'
 
             script {
 
+                // Get Git information
                 def commitAuthor = sh(
                     script: 'git log -1 --pretty=format:%an',
                     returnStdout: true
@@ -105,6 +110,7 @@ pipeline {
                 ).trim()
 
 
+                // Load Telegram credentials
                 withCredentials([
 
                     string(
@@ -115,6 +121,11 @@ pipeline {
                     string(
                         credentialsId: 'telegram-chat-id',
                         variable: 'TELEGRAM_CHAT_ID'
+                    ),
+
+                    string(
+                        credentialsId: 'telegram-topic-id',
+                        variable: 'TELEGRAM_TOPIC_ID'
                     )
 
                 ]) {
@@ -153,6 +164,7 @@ $IMAGE_NAME:$BUILD_NUMBER
                                 curl -sS -X POST \
                                   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
                                   --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+                                  --data-urlencode "message_thread_id=${TELEGRAM_TOPIC_ID}" \
                                   --data-urlencode "text=${MESSAGE}"
                             '''
                         )
@@ -162,13 +174,18 @@ $IMAGE_NAME:$BUILD_NUMBER
         }
 
 
-        // ============================================
-        // FAILURE TELEGRAM MESSAGE
-        // ============================================
+        // ==========================================
+        // FAILURE
+        // ==========================================
         failure {
+
+            echo '========================================'
+            echo '❌ PIPELINE FAILED'
+            echo '========================================'
 
             script {
 
+                // Get Git information
                 def commitAuthor = sh(
                     script: 'git log -1 --pretty=format:%an',
                     returnStdout: true
@@ -185,7 +202,7 @@ $IMAGE_NAME:$BUILD_NUMBER
                 ).trim()
 
 
-                // Generic error
+                // Default error message
                 def reportSummary = """
 ❌ Pipeline failed.
 
@@ -193,9 +210,9 @@ Please check Jenkins Console Output.
 """
 
 
-                // ====================================
-                // IF TRIVY DEPENDENCY SCAN FAILED
-                // ====================================
+                // ==================================
+                // TRIVY DEPENDENCY FAILURE REPORT
+                // ==================================
                 if (
                     fileExists('trivy-failed') &&
                     fileExists('trivy-report.json')
@@ -207,11 +224,17 @@ python3 <<'PY'
 
 import json
 
+
+# ==========================================
+# Read Trivy JSON report
+# ==========================================
+
 with open("trivy-report.json") as f:
     report = json.load(f)
 
 
 vulnerabilities = []
+
 
 for result in report.get("Results", []):
 
@@ -220,29 +243,37 @@ for result in report.get("Results", []):
         vulnerabilities.append(vuln)
 
 
+# ==========================================
 # Count severity
+# ==========================================
+
 high = sum(
-    1 for v in vulnerabilities
-    if v.get("Severity") == "HIGH"
+    1 for vuln in vulnerabilities
+    if vuln.get("Severity") == "HIGH"
 )
+
 
 critical = sum(
-    1 for v in vulnerabilities
-    if v.get("Severity") == "CRITICAL"
+    1 for vuln in vulnerabilities
+    if vuln.get("Severity") == "CRITICAL"
 )
 
 
-# Get vulnerable packages
+# ==========================================
+# Find vulnerable packages
+# ==========================================
+
 packages = {}
 
-for v in vulnerabilities:
 
-    package = v.get(
+for vuln in vulnerabilities:
+
+    package = vuln.get(
         "PkgName",
         "Unknown"
     )
 
-    version = v.get(
+    version = vuln.get(
         "InstalledVersion",
         "Unknown"
     )
@@ -250,15 +281,22 @@ for v in vulnerabilities:
     packages[f"{package} {version}"] = True
 
 
+# ==========================================
+# Create Telegram report
+# ==========================================
+
 print("🚨 DEPENDENCY SECURITY FAILED")
+
 print()
 
 print("📊 Security Summary")
 print(f"HIGH: {high}")
 print(f"CRITICAL: {critical}")
+
 print()
 
 print("⚠️ Vulnerable Packages")
+
 
 for package in list(packages.keys())[:5]:
 
@@ -266,8 +304,12 @@ for package in list(packages.keys())[:5]:
 
 
 print()
+
 print("🚨 Vulnerabilities")
 
+
+# Only show first 5 vulnerabilities
+# to keep Telegram message short
 
 for vuln in vulnerabilities[:5]:
 
@@ -296,12 +338,28 @@ for vuln in vulnerabilities[:5]:
     ) or "No fix available"
 
 
-    print(f"• {cve} [{severity}]")
-    print(f"  Package: {package}")
-    print(f"  Installed: {installed}")
-    print(f"  Fix: {fixed}")
+    print(
+        f"• {cve} [{severity}]"
+    )
+
+    print(
+        f"  Package: {package}"
+    )
+
+    print(
+        f"  Installed: {installed}"
+    )
+
+    print(
+        f"  Fix: {fixed}"
+    )
+
     print()
 
+
+# ==========================================
+# Show remaining vulnerability count
+# ==========================================
 
 if len(vulnerabilities) > 5:
 
@@ -311,8 +369,12 @@ if len(vulnerabilities) > 5:
 
 
 print()
+
 print("❌ Docker build BLOCKED.")
-print("Fix the vulnerable dependencies and push again.")
+
+print(
+    "Fix the vulnerable dependencies and push again."
+)
 
 PY
                         ''',
@@ -321,9 +383,9 @@ PY
                 }
 
 
-                // ====================================
-                // SEND FAILURE MESSAGE
-                // ====================================
+                // ==================================
+                // TELEGRAM CREDENTIALS
+                // ==================================
                 withCredentials([
 
                     string(
@@ -334,21 +396,28 @@ PY
                     string(
                         credentialsId: 'telegram-chat-id',
                         variable: 'TELEGRAM_CHAT_ID'
+                    ),
+
+                    string(
+                        credentialsId: 'telegram-topic-id',
+                        variable: 'TELEGRAM_TOPIC_ID'
                     )
 
                 ]) {
 
                     withEnv([
+
                         "COMMIT_AUTHOR=${commitAuthor}",
                         "COMMIT_MESSAGE=${commitMessage}",
                         "SHORT_COMMIT=${shortCommit}",
                         "REPORT_SUMMARY=${reportSummary}"
+
                     ]) {
 
                         sh(
                             returnStatus: true,
                             script: '''
-                                MESSAGE="🚨 Jenkins Build FAILED
+                                MESSAGE="🚨  Build FAILED
 
 Project: $JOB_NAME
 Build: #$BUILD_NUMBER
@@ -364,6 +433,7 @@ $REPORT_SUMMARY"
                                 curl -sS -X POST \
                                   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
                                   --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+                                  --data-urlencode "message_thread_id=${TELEGRAM_TOPIC_ID}" \
                                   --data-urlencode "text=${MESSAGE}"
                             '''
                         )
@@ -373,9 +443,9 @@ $REPORT_SUMMARY"
         }
 
 
-        // ============================================
+        // ==========================================
         // ALWAYS
-        // ============================================
+        // ==========================================
         always {
 
             echo '========================================'
@@ -383,6 +453,8 @@ $REPORT_SUMMARY"
             echo "Docker Image: ${IMAGE_NAME}:${BUILD_NUMBER}"
             echo '========================================'
 
+
+            // Save Trivy report inside Jenkins
             archiveArtifacts(
                 artifacts: 'trivy-report.json',
                 allowEmptyArchive: true
