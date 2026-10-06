@@ -1,9 +1,14 @@
 pipeline {
     agent any
 
+    // environment {
+    //     IMAGE_NAME = "trivy-test"
+    //     TRIVY = "/usr/local/bin/trivy"
+    // }
     environment {
         IMAGE_NAME = "trivy-test"
         TRIVY = "/usr/local/bin/trivy"
+        PATH = "/usr/local/bin/docker-credential-desktop"
     }
 
     stages {
