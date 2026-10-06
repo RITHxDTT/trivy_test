@@ -1,42 +1,65 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME = "trivy-test"
+    }
+
     stages {
-        stage('Checkout') {
+
+        stage('Trivy Dependency Scan') {
             steps {
-                echo '📥 Checking out source code...'
-                checkout scm
+                echo '🔍 Checking dependencies for vulnerabilities...'
+
+                sh '''
+                    trivy fs \
+                      --scanners vuln \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 1 \
+                      --no-progress \
+                      .
+                '''
             }
         }
 
-        stage('Build') {
+        stage('Build Docker Image') {
             steps {
-                echo '🔨 Building application...'
-                sh 'python3 --version'
+                echo '🐳 Dependencies are safe. Building Docker image...'
+
+                sh '''
+                    docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} .
+                '''
             }
         }
 
-        stage('Test') {
+        stage('Trivy Image Scan') {
             steps {
-                echo '🧪 Testing Python code...'
-                sh 'python3 -m py_compile app.py'
+                echo '🔍 Scanning final Docker image...'
+
+                sh '''
+                    trivy image \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 1 \
+                      --no-progress \
+                      ${IMAGE_NAME}:${BUILD_NUMBER}
+                '''
             }
         }
 
-        stage('Complete') {
+        stage('Security Passed') {
             steps {
-                echo '🚀 Application passed all stages!'
+                echo '✅ Security checks passed!'
             }
         }
     }
 
     post {
         success {
-            echo '✅ Jenkins build SUCCESS!'
+            echo '✅ Pipeline SUCCESS - dependencies and image are safe.'
         }
 
         failure {
-            echo ' Jenkins build FAILED!'
+            echo '🚨 Pipeline FAILED - HIGH/CRITICAL vulnerability detected!'
         }
     }
 }
