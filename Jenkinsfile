@@ -8,7 +8,7 @@ pipeline {
     environment {
         IMAGE_NAME = "trivy-test"
         TRIVY = "/usr/local/bin/trivy"
-        PATH = "/usr/local/bin/docker-credential-desktop"
+        PATH = "/usr/local/bin:${env.PATH}"
     }
 
     stages {
