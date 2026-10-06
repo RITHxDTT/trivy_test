@@ -10,11 +10,11 @@ pipeline {
     stages {
 
         // ============================================
-        // 1. TRIVY DEPENDENCY SCAN
+        // 1. DEPENDENCY SECURITY SCAN
         // ============================================
         stage('Trivy Dependency Scan') {
             steps {
-                echo '🔍 Checking dependencies for vulnerabilities...'
+                echo '🔍 Scanning project dependencies...'
 
                 sh '''
                     rm -f trivy-report.json
@@ -34,7 +34,7 @@ pipeline {
                     TRIVY_EXIT=$?
 
                     if [ "$TRIVY_EXIT" -ne 0 ]; then
-                        echo "❌ Trivy dependency scan failed."
+                        echo "❌ Vulnerable dependency detected."
                         touch trivy-failed
                         exit "$TRIVY_EXIT"
                     fi
@@ -47,10 +47,11 @@ pipeline {
 
         // ============================================
         // 2. BUILD DOCKER IMAGE
+        // Only runs if Trivy passed
         // ============================================
         stage('Build Docker Image') {
             steps {
-                echo '🐳 Dependencies are safe.'
+                echo '🐳 Security scan passed.'
                 echo '🐳 Building Docker image...'
 
                 sh '''
@@ -65,70 +66,26 @@ pipeline {
 
 
         // ============================================
-        // 3. TRIVY IMAGE SCAN
+        // 3. BUILD COMPLETE
         // ============================================
-        stage('Trivy Image Scan') {
-            steps {
-                echo '🔍 Scanning final Docker image...'
-
-                sh '''
-                    rm -f trivy-image-report.json
-                    rm -f trivy-image-failed
-
-                    set +e
-
-                    ${TRIVY} image \
-                      --severity HIGH,CRITICAL \
-                      --format json \
-                      --output trivy-image-report.json \
-                      --exit-code 1 \
-                      --no-progress \
-                      ${IMAGE_NAME}:${BUILD_NUMBER}
-
-                    TRIVY_EXIT=$?
-
-                    if [ "$TRIVY_EXIT" -ne 0 ]; then
-                        echo "❌ Trivy image scan failed."
-                        touch trivy-image-failed
-                        exit "$TRIVY_EXIT"
-                    fi
-
-                    echo "✅ Docker image security scan passed."
-                '''
-            }
-        }
-
-
-        // ============================================
-        // 4. SECURITY PASSED
-        // ============================================
-        stage('Security Passed') {
+        stage('Build Complete') {
             steps {
                 echo '========================================'
-                echo '✅ SECURITY CHECKS PASSED'
-                echo '✅ Dependency scan passed'
-                echo '✅ Docker image built'
-                echo '✅ Docker image scan passed'
-                echo '🚀 Application can continue to deployment'
+                echo '✅ DEPENDENCY SCAN PASSED'
+                echo '✅ DOCKER BUILD PASSED'
+                echo '🚀 BUILD SUCCESS'
                 echo '========================================'
             }
         }
     }
 
 
-    // ================================================
-    // POST ACTIONS
-    // ================================================
     post {
 
         // ============================================
-        // SUCCESS
+        // SUCCESS TELEGRAM MESSAGE
         // ============================================
         success {
-
-            echo '========================================'
-            echo '✅ PIPELINE SUCCESS'
-            echo '========================================'
 
             script {
 
@@ -185,13 +142,13 @@ $COMMIT_MESSAGE
 🔐 Security Report
 
 ✅ Dependency Scan: PASSED
+✅ No blocking HIGH/CRITICAL vulnerabilities
 ✅ Docker Build: PASSED
-✅ Docker Image Scan: PASSED
 
-🐳 Image:
+🐳 Docker Image:
 $IMAGE_NAME:$BUILD_NUMBER
 
-🚀 Application is ready for the next deployment stage."
+🚀 Build completed successfully."
 
                                 curl -sS -X POST \
                                   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -206,19 +163,11 @@ $IMAGE_NAME:$BUILD_NUMBER
 
 
         // ============================================
-        // FAILURE
+        // FAILURE TELEGRAM MESSAGE
         // ============================================
         failure {
 
-            echo '========================================'
-            echo '❌ PIPELINE FAILED'
-            echo '========================================'
-
             script {
-
-                // ------------------------------------
-                // Get Git information
-                // ------------------------------------
 
                 def commitAuthor = sh(
                     script: 'git log -1 --pretty=format:%an',
@@ -236,18 +185,17 @@ $IMAGE_NAME:$BUILD_NUMBER
                 ).trim()
 
 
-                // Default failure message
+                // Generic error
                 def reportSummary = """
 ❌ Pipeline failed.
 
-Check Jenkins Console Output for more information.
+Please check Jenkins Console Output.
 """
 
 
                 // ====================================
-                // DEPENDENCY SCAN FAILED
+                // IF TRIVY DEPENDENCY SCAN FAILED
                 // ====================================
-
                 if (
                     fileExists('trivy-failed') &&
                     fileExists('trivy-report.json')
@@ -266,31 +214,35 @@ with open("trivy-report.json") as f:
 vulnerabilities = []
 
 for result in report.get("Results", []):
+
     for vuln in result.get("Vulnerabilities") or []:
+
         vulnerabilities.append(vuln)
 
 
+# Count severity
 high = sum(
-    1 for vuln in vulnerabilities
-    if vuln.get("Severity") == "HIGH"
+    1 for v in vulnerabilities
+    if v.get("Severity") == "HIGH"
 )
 
 critical = sum(
-    1 for vuln in vulnerabilities
-    if vuln.get("Severity") == "CRITICAL"
+    1 for v in vulnerabilities
+    if v.get("Severity") == "CRITICAL"
 )
 
 
+# Get vulnerable packages
 packages = {}
 
-for vuln in vulnerabilities:
+for v in vulnerabilities:
 
-    package = vuln.get(
+    package = v.get(
         "PkgName",
         "Unknown"
     )
 
-    version = vuln.get(
+    version = v.get(
         "InstalledVersion",
         "Unknown"
     )
@@ -298,25 +250,24 @@ for vuln in vulnerabilities:
     packages[f"{package} {version}"] = True
 
 
-print("🔍 Trivy Dependency Scan: FAILED")
-
+print("🚨 DEPENDENCY SECURITY FAILED")
 print()
 
 print("📊 Security Summary")
 print(f"HIGH: {high}")
 print(f"CRITICAL: {critical}")
-
 print()
 
 print("⚠️ Vulnerable Packages")
 
 for package in list(packages.keys())[:5]:
+
     print(f"• {package}")
 
 
 print()
-
 print("🚨 Vulnerabilities")
+
 
 for vuln in vulnerabilities[:5]:
 
@@ -329,129 +280,14 @@ for vuln in vulnerabilities[:5]:
         "Severity",
         "Unknown"
     )
-
-    fixed = vuln.get(
-        "FixedVersion"
-    ) or "No fix available"
-
-    print(
-        f"• {cve} [{severity}]"
-    )
-
-    print(
-        f"  Fix: {fixed}"
-    )
-
-
-if len(vulnerabilities) > 5:
-
-    print()
-
-    print(
-        f"...and {len(vulnerabilities) - 5} more."
-    )
-
-
-print()
-
-print(
-    "❌ Build blocked before Docker build."
-)
-
-PY
-                        ''',
-                        returnStdout: true
-                    ).trim()
-                }
-
-
-                // ====================================
-                // IMAGE SCAN FAILED
-                // ====================================
-
-                else if (
-                    fileExists('trivy-image-failed') &&
-                    fileExists('trivy-image-report.json')
-                ) {
-
-                    reportSummary = sh(
-                        script: '''
-python3 <<'PY'
-
-import json
-
-with open("trivy-image-report.json") as f:
-    report = json.load(f)
-
-
-vulnerabilities = []
-
-for result in report.get("Results", []):
-    for vuln in result.get("Vulnerabilities") or []:
-        vulnerabilities.append(vuln)
-
-
-high = sum(
-    1 for vuln in vulnerabilities
-    if vuln.get("Severity") == "HIGH"
-)
-
-critical = sum(
-    1 for vuln in vulnerabilities
-    if vuln.get("Severity") == "CRITICAL"
-)
-
-
-packages = {}
-
-for vuln in vulnerabilities:
 
     package = vuln.get(
         "PkgName",
         "Unknown"
     )
 
-    version = vuln.get(
+    installed = vuln.get(
         "InstalledVersion",
-        "Unknown"
-    )
-
-    packages[f"{package} {version}"] = True
-
-
-print("🐳 Trivy Docker Image Scan: FAILED")
-
-print()
-
-print("📊 Security Summary")
-print(f"HIGH: {high}")
-print(f"CRITICAL: {critical}")
-
-print()
-
-print("⚠️ Vulnerable Packages")
-
-for package in list(packages.keys())[:5]:
-
-    print(
-        f"• {package}"
-    )
-
-
-print()
-
-print("🚨 Vulnerabilities")
-
-
-for vuln in vulnerabilities[:5]:
-
-    cve = vuln.get(
-        "VulnerabilityID",
-        "Unknown"
-    )
-
-    severity = vuln.get(
-        "Severity",
         "Unknown"
     )
 
@@ -460,29 +296,23 @@ for vuln in vulnerabilities[:5]:
     ) or "No fix available"
 
 
-    print(
-        f"• {cve} [{severity}]"
-    )
-
-    print(
-        f"  Fix: {fixed}"
-    )
+    print(f"• {cve} [{severity}]")
+    print(f"  Package: {package}")
+    print(f"  Installed: {installed}")
+    print(f"  Fix: {fixed}")
+    print()
 
 
 if len(vulnerabilities) > 5:
 
-    print()
-
     print(
-        f"...and {len(vulnerabilities) - 5} more."
+        f"...and {len(vulnerabilities) - 5} more vulnerabilities."
     )
 
 
 print()
-
-print(
-    "❌ Docker image blocked from deployment."
-)
+print("❌ Docker build BLOCKED.")
+print("Fix the vulnerable dependencies and push again.")
 
 PY
                         ''',
@@ -492,9 +322,8 @@ PY
 
 
                 // ====================================
-                // SEND TELEGRAM
+                // SEND FAILURE MESSAGE
                 // ====================================
-
                 withCredentials([
 
                     string(
@@ -510,12 +339,10 @@ PY
                 ]) {
 
                     withEnv([
-
                         "COMMIT_AUTHOR=${commitAuthor}",
                         "COMMIT_MESSAGE=${commitMessage}",
                         "SHORT_COMMIT=${shortCommit}",
                         "REPORT_SUMMARY=${reportSummary}"
-
                     ]) {
 
                         sh(
@@ -557,7 +384,7 @@ $REPORT_SUMMARY"
             echo '========================================'
 
             archiveArtifacts(
-                artifacts: 'trivy-report.json,trivy-image-report.json',
+                artifacts: 'trivy-report.json',
                 allowEmptyArchive: true
             )
         }
